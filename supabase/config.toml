@@ -1,1 +1,7 @@
 project_id = "vlwckqspkyxlamszywow"
+
+[functions.matchmaking]
+verify_jwt = false
+
+[functions.report]
+verify_jwt = false
