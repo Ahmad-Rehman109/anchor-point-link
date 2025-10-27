@@ -105,7 +105,7 @@ const VideoChat = () => {
         },
       });
 
-      // Get local stream
+      // Get local stream with detailed error handling
       const localStream = await webrtcRef.current.initLocalStream();
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = localStream;
@@ -113,14 +113,27 @@ const VideoChat = () => {
 
       // Start matchmaking
       await findMatch();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error starting chat:', error);
+      
+      let errorMessage = 'Failed to access camera/microphone.';
+      
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        errorMessage = 'Camera/microphone access denied. Please allow permissions in your browser settings and try again.';
+      } else if (error.name === 'NotFoundError') {
+        errorMessage = 'No camera or microphone found. Please connect a device and try again.';
+      } else if (error.name === 'NotReadableError') {
+        errorMessage = 'Camera/microphone is already in use by another application.';
+      }
+      
       toast({
         title: 'Error',
-        description: 'Failed to access camera/microphone. Please check permissions.',
+        description: errorMessage,
         variant: 'destructive',
+        duration: 5000,
       });
       setConnectionState('idle');
+      cleanup();
     }
   };
 
