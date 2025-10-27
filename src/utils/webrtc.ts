@@ -1,0 +1,145 @@
+export interface WebRTCConfig {
+  onRemoteStream?: (stream: MediaStream) => void;
+  onIceCandidate?: (candidate: RTCIceCandidate) => void;
+  onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
+}
+
+export class WebRTCConnection {
+  private pc: RTCPeerConnection;
+  private localStream: MediaStream | null = null;
+  private config: WebRTCConfig;
+
+  constructor(config: WebRTCConfig = {}) {
+    this.config = config;
+    
+    // Initialize peer connection with STUN servers
+    this.pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    });
+
+    this.setupEventHandlers();
+  }
+
+  private setupEventHandlers() {
+    // Handle incoming remote stream
+    this.pc.ontrack = (event) => {
+      console.log('Received remote track:', event.track.kind);
+      if (this.config.onRemoteStream) {
+        this.config.onRemoteStream(event.streams[0]);
+      }
+    };
+
+    // Handle ICE candidates
+    this.pc.onicecandidate = (event) => {
+      if (event.candidate && this.config.onIceCandidate) {
+        this.config.onIceCandidate(event.candidate);
+      }
+    };
+
+    // Handle connection state changes
+    this.pc.onconnectionstatechange = () => {
+      console.log('Connection state:', this.pc.connectionState);
+      if (this.config.onConnectionStateChange) {
+        this.config.onConnectionStateChange(this.pc.connectionState);
+      }
+    };
+
+    // Handle ICE connection state changes
+    this.pc.oniceconnectionstatechange = () => {
+      console.log('ICE connection state:', this.pc.iceConnectionState);
+    };
+  }
+
+  async initLocalStream(): Promise<MediaStream> {
+    try {
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user',
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      // Add tracks to peer connection
+      this.localStream.getTracks().forEach(track => {
+        this.pc.addTrack(track, this.localStream!);
+      });
+
+      return this.localStream;
+    } catch (error) {
+      console.error('Error accessing media devices:', error);
+      throw error;
+    }
+  }
+
+  async createOffer(): Promise<RTCSessionDescriptionInit> {
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer);
+    return offer;
+  }
+
+  async createAnswer(): Promise<RTCSessionDescriptionInit> {
+    const answer = await this.pc.createAnswer();
+    await this.pc.setLocalDescription(answer);
+    return answer;
+  }
+
+  async setRemoteDescription(description: RTCSessionDescriptionInit) {
+    await this.pc.setRemoteDescription(new RTCSessionDescription(description));
+  }
+
+  async addIceCandidate(candidate: RTCIceCandidateInit) {
+    try {
+      await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (error) {
+      console.error('Error adding ICE candidate:', error);
+    }
+  }
+
+  getConnectionState(): RTCPeerConnectionState {
+    return this.pc.connectionState;
+  }
+
+  getLocalStream(): MediaStream | null {
+    return this.localStream;
+  }
+
+  disconnect() {
+    // Stop all tracks
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(track => track.stop());
+      this.localStream = null;
+    }
+
+    // Close peer connection
+    if (this.pc) {
+      this.pc.close();
+    }
+  }
+}
+
+// Helper to capture a frame from video element
+export function captureVideoFrame(videoElement: HTMLVideoElement): string | null {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = videoElement.videoWidth;
+    canvas.height = videoElement.videoHeight;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    
+    ctx.drawImage(videoElement, 0, 0);
+    return canvas.toDataURL('image/jpeg', 0.8);
+  } catch (error) {
+    console.error('Error capturing frame:', error);
+    return null;
+  }
+}
