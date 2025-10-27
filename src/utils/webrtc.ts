@@ -55,6 +55,7 @@ export class WebRTCConnection {
 
   async initLocalStream(): Promise<MediaStream> {
     try {
+      console.log('[WebRTC] Requesting media devices...');
       this.localStream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
@@ -68,32 +69,41 @@ export class WebRTCConnection {
         },
       });
 
+      console.log('[WebRTC] ✅ Media devices acquired');
+
       // Add tracks to peer connection
       this.localStream.getTracks().forEach(track => {
+        console.log('[WebRTC] Adding track:', track.kind);
         this.pc.addTrack(track, this.localStream!);
       });
 
       return this.localStream;
     } catch (error) {
-      console.error('Error accessing media devices:', error);
+      console.error('[WebRTC] ❌ Error accessing media devices:', error);
       throw error;
     }
   }
 
   async createOffer(): Promise<RTCSessionDescriptionInit> {
+    console.log('[WebRTC] Creating offer...');
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
+    console.log('[WebRTC] Local description set (offer)');
     return offer;
   }
 
   async createAnswer(): Promise<RTCSessionDescriptionInit> {
+    console.log('[WebRTC] Creating answer...');
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
+    console.log('[WebRTC] Local description set (answer)');
     return answer;
   }
 
   async setRemoteDescription(description: RTCSessionDescriptionInit) {
+    console.log('[WebRTC] Setting remote description:', description.type);
     await this.pc.setRemoteDescription(new RTCSessionDescription(description));
+    console.log('[WebRTC] ✅ Remote description set');
   }
 
   async addIceCandidate(candidate: RTCIceCandidateInit) {

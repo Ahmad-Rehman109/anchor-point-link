@@ -89,11 +89,13 @@ const VideoChat = () => {
 
   const startSearch = async () => {
     setConnectionState('searching');
+    console.log('[VideoChat] Starting search, userId:', userId);
     
     try {
       // Initialize WebRTC
       webrtcRef.current = new WebRTCConnection({
         onRemoteStream: (stream) => {
+          console.log('[VideoChat] Remote stream received');
           if (remoteVideoRef.current) {
             remoteVideoRef.current.srcObject = stream;
             
@@ -102,11 +104,13 @@ const VideoChat = () => {
           }
         },
         onIceCandidate: async (candidate) => {
+          console.log('[VideoChat] ICE candidate generated');
           if (peerIdRef.current) {
             await sendSignal(peerIdRef.current, { type: 'ice-candidate', candidate });
           }
         },
         onConnectionStateChange: (state) => {
+          console.log('[VideoChat] Connection state changed to:', state);
           if (state === 'connected') {
             setConnectionState('connected');
             
@@ -119,29 +123,29 @@ const VideoChat = () => {
       });
 
       // Get local stream with detailed error handling
-      const localStream = await webrtcRef.current.initLocalStream();
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = localStream;
+      try {
+        const localStream = await webrtcRef.current.initLocalStream();
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStream;
+        }
+        console.log('[VideoChat] Local stream initialized');
+      } catch (mediaError: any) {
+        console.warn('[VideoChat] Media access failed, continuing without camera:', mediaError.name);
+        // Continue anyway for testing purposes
+        toast({
+          title: 'Camera unavailable',
+          description: 'Continuing in test mode without video',
+        });
       }
 
       // Start matchmaking
       await findMatch();
     } catch (error: any) {
-      console.error('Error starting chat:', error);
-      
-      let errorMessage = 'Failed to access camera/microphone.';
-      
-      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        errorMessage = 'Camera/microphone access denied. Please allow permissions in your browser settings and try again.';
-      } else if (error.name === 'NotFoundError') {
-        errorMessage = 'No camera or microphone found. Please connect a device and try again.';
-      } else if (error.name === 'NotReadableError') {
-        errorMessage = 'Camera/microphone is already in use by another application.';
-      }
+      console.error('[VideoChat] Error starting chat:', error);
       
       toast({
         title: 'Error',
-        description: errorMessage,
+        description: 'Failed to start. Check console for details.',
         variant: 'destructive',
         duration: 5000,
       });
@@ -157,6 +161,7 @@ const VideoChat = () => {
     const matchInterval = setInterval(async () => {
       if (attempts >= maxAttempts) {
         clearInterval(matchInterval);
+        console.log('[VideoChat] No match found after 30 seconds');
         toast({
           title: 'No Match Found',
           description: 'Could not find anyone to chat with. Please try again.',
@@ -166,6 +171,7 @@ const VideoChat = () => {
       }
 
       try {
+        console.log(`[VideoChat] Matchmaking attempt ${attempts + 1}/${maxAttempts}`);
         const { data, error } = await supabase.functions.invoke('matchmaking', {
           body: {
             action: 'find_match',
@@ -174,16 +180,23 @@ const VideoChat = () => {
           },
         });
 
-        if (error) throw error;
+        if (error) {
+          console.error('[VideoChat] Matchmaking error:', error);
+          throw error;
+        }
+
+        console.log('[VideoChat] Matchmaking response:', data);
 
         if (data.matched) {
           clearInterval(matchInterval);
-          console.log('Match found with peer:', data.peerId);
+          console.log('[VideoChat] ✅ Match found! Peer:', data.peerId);
           
           peerIdRef.current = data.peerId;
           
           // Determine who initiates (user with lexically smaller ID)
           isInitiatorRef.current = userId < data.peerId;
+          
+          console.log('[VideoChat] Am I initiator?', isInitiatorRef.current, '(my ID:', userId, 'peer ID:', data.peerId, ')');
           
           toast({
             title: 'Match Found!',
@@ -192,17 +205,17 @@ const VideoChat = () => {
 
           // Start WebRTC signaling
           if (isInitiatorRef.current) {
-            console.log('I am the initiator, creating offer...');
+            console.log('[VideoChat] 📞 I am the initiator, creating offer...');
             await initiateConnection();
           } else {
-            console.log('I am the receiver, waiting for offer...');
+            console.log('[VideoChat] 📱 I am the receiver, waiting for offer...');
           }
 
           // Start polling for signals
           startSignalPolling();
         }
       } catch (error) {
-        console.error('Matchmaking error:', error);
+        console.error('[VideoChat] Matchmaking error:', error);
       }
 
       attempts++;
@@ -211,7 +224,8 @@ const VideoChat = () => {
 
   const sendSignal = async (peerId: string, signal: any) => {
     try {
-      await supabase.functions.invoke('signaling', {
+      console.log('[Signaling] 📤 Sending signal to', peerId, ':', signal.type);
+      const { data, error } = await supabase.functions.invoke('signaling', {
         body: {
           action: 'send_signal',
           userId,
@@ -219,24 +233,33 @@ const VideoChat = () => {
           signal,
         },
       });
-      console.log('Signal sent to', peerId, signal.type);
+      
+      if (error) {
+        console.error('[Signaling] Error sending signal:', error);
+      } else {
+        console.log('[Signaling] ✅ Signal sent successfully');
+      }
     } catch (error) {
-      console.error('Error sending signal:', error);
+      console.error('[Signaling] Exception sending signal:', error);
     }
   };
 
   const initiateConnection = async () => {
-    if (!webrtcRef.current) return;
+    if (!webrtcRef.current) {
+      console.error('[WebRTC] Cannot initiate - no connection object');
+      return;
+    }
 
     try {
+      console.log('[WebRTC] Creating offer...');
       const offer = await webrtcRef.current.createOffer();
-      console.log('Offer created');
+      console.log('[WebRTC] ✅ Offer created:', offer);
       
       if (peerIdRef.current) {
         await sendSignal(peerIdRef.current, { type: 'offer', sdp: offer });
       }
     } catch (error) {
-      console.error('Error creating offer:', error);
+      console.error('[WebRTC] Error creating offer:', error);
     }
   };
 
@@ -244,6 +267,8 @@ const VideoChat = () => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
     }
+
+    console.log('[Signaling] 🔄 Starting signal polling...');
 
     pollingIntervalRef.current = setInterval(async () => {
       try {
@@ -254,39 +279,53 @@ const VideoChat = () => {
           },
         });
 
-        if (error) throw error;
+        if (error) {
+          console.error('[Signaling] Error polling:', error);
+          throw error;
+        }
 
         if (data.signals && data.signals.length > 0) {
+          console.log('[Signaling] 📥 Received', data.signals.length, 'signal(s)');
           for (const message of data.signals) {
             await handleSignal(message.signal);
           }
         }
       } catch (error) {
-        console.error('Error polling signals:', error);
+        console.error('[Signaling] Polling error:', error);
       }
     }, 1000);
   };
 
   const handleSignal = async (signal: any) => {
-    if (!webrtcRef.current) return;
+    if (!webrtcRef.current) {
+      console.error('[WebRTC] Cannot handle signal - no connection object');
+      return;
+    }
 
-    console.log('Received signal:', signal.type);
+    console.log('[WebRTC] 📨 Received signal:', signal.type);
 
     try {
       if (signal.type === 'offer') {
+        console.log('[WebRTC] Processing offer...');
         await webrtcRef.current.setRemoteDescription(signal.sdp);
+        console.log('[WebRTC] Creating answer...');
         const answer = await webrtcRef.current.createAnswer();
+        console.log('[WebRTC] ✅ Answer created');
         
         if (peerIdRef.current) {
           await sendSignal(peerIdRef.current, { type: 'answer', sdp: answer });
         }
       } else if (signal.type === 'answer') {
+        console.log('[WebRTC] Processing answer...');
         await webrtcRef.current.setRemoteDescription(signal.sdp);
+        console.log('[WebRTC] ✅ Answer processed');
       } else if (signal.type === 'ice-candidate') {
+        console.log('[WebRTC] Adding ICE candidate...');
         await webrtcRef.current.addIceCandidate(signal.candidate);
+        console.log('[WebRTC] ✅ ICE candidate added');
       }
     } catch (error) {
-      console.error('Error handling signal:', error);
+      console.error('[WebRTC] Error handling signal:', error);
     }
   };
 
