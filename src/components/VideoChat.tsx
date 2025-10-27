@@ -17,6 +17,9 @@ const VideoChat = () => {
   const webrtcRef = useRef<WebRTCConnection | null>(null);
   const sessionFramesRef = useRef<string[]>([]);
   const nsfwCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const peerIdRef = useRef<string | null>(null);
+  const isInitiatorRef = useRef<boolean>(false);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
@@ -42,7 +45,12 @@ const VideoChat = () => {
       clearInterval(nsfwCheckIntervalRef.current);
       nsfwCheckIntervalRef.current = null;
     }
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
     sessionFramesRef.current = [];
+    peerIdRef.current = null;
   };
 
   const startNSFWMonitoring = () => {
@@ -91,6 +99,11 @@ const VideoChat = () => {
             
             // Start NSFW monitoring once remote stream is available
             startNSFWMonitoring();
+          }
+        },
+        onIceCandidate: async (candidate) => {
+          if (peerIdRef.current) {
+            await sendSignal(peerIdRef.current, { type: 'ice-candidate', candidate });
           }
         },
         onConnectionStateChange: (state) => {
@@ -165,14 +178,28 @@ const VideoChat = () => {
 
         if (data.matched) {
           clearInterval(matchInterval);
-          console.log('Match found!');
+          console.log('Match found with peer:', data.peerId);
           
-          // Exchange WebRTC offers (simplified signaling)
-          // In production, use WebSocket signaling server
+          peerIdRef.current = data.peerId;
+          
+          // Determine who initiates (user with lexically smaller ID)
+          isInitiatorRef.current = userId < data.peerId;
+          
           toast({
             title: 'Match Found!',
             description: 'Connecting to your chat partner...',
           });
+
+          // Start WebRTC signaling
+          if (isInitiatorRef.current) {
+            console.log('I am the initiator, creating offer...');
+            await initiateConnection();
+          } else {
+            console.log('I am the receiver, waiting for offer...');
+          }
+
+          // Start polling for signals
+          startSignalPolling();
         }
       } catch (error) {
         console.error('Matchmaking error:', error);
@@ -180,6 +207,87 @@ const VideoChat = () => {
 
       attempts++;
     }, 1000);
+  };
+
+  const sendSignal = async (peerId: string, signal: any) => {
+    try {
+      await supabase.functions.invoke('signaling', {
+        body: {
+          action: 'send_signal',
+          userId,
+          peerId,
+          signal,
+        },
+      });
+      console.log('Signal sent to', peerId, signal.type);
+    } catch (error) {
+      console.error('Error sending signal:', error);
+    }
+  };
+
+  const initiateConnection = async () => {
+    if (!webrtcRef.current) return;
+
+    try {
+      const offer = await webrtcRef.current.createOffer();
+      console.log('Offer created');
+      
+      if (peerIdRef.current) {
+        await sendSignal(peerIdRef.current, { type: 'offer', sdp: offer });
+      }
+    } catch (error) {
+      console.error('Error creating offer:', error);
+    }
+  };
+
+  const startSignalPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('signaling', {
+          body: {
+            action: 'get_signals',
+            userId,
+          },
+        });
+
+        if (error) throw error;
+
+        if (data.signals && data.signals.length > 0) {
+          for (const message of data.signals) {
+            await handleSignal(message.signal);
+          }
+        }
+      } catch (error) {
+        console.error('Error polling signals:', error);
+      }
+    }, 1000);
+  };
+
+  const handleSignal = async (signal: any) => {
+    if (!webrtcRef.current) return;
+
+    console.log('Received signal:', signal.type);
+
+    try {
+      if (signal.type === 'offer') {
+        await webrtcRef.current.setRemoteDescription(signal.sdp);
+        const answer = await webrtcRef.current.createAnswer();
+        
+        if (peerIdRef.current) {
+          await sendSignal(peerIdRef.current, { type: 'answer', sdp: answer });
+        }
+      } else if (signal.type === 'answer') {
+        await webrtcRef.current.setRemoteDescription(signal.sdp);
+      } else if (signal.type === 'ice-candidate') {
+        await webrtcRef.current.addIceCandidate(signal.candidate);
+      }
+    } catch (error) {
+      console.error('Error handling signal:', error);
+    }
   };
 
   const captureSessionFrame = () => {
@@ -259,10 +367,10 @@ const VideoChat = () => {
         </div>
       </div>
 
-      {/* Video Grid */}
-      <div className="flex-1 relative flex items-center justify-center p-4 pt-20 pb-24">
-        {/* Remote Video (main) */}
-        <div className="relative w-full h-full max-w-7xl rounded-2xl overflow-hidden bg-card border-2 border-border shadow-[var(--shadow-strong)]">
+      {/* Video Grid - Split Screen */}
+      <div className="flex-1 relative flex flex-col pt-20 pb-24">
+        {/* Remote Video (top half) */}
+        <div className="relative w-full h-1/2 overflow-hidden bg-card border-b-2 border-border">
           <video
             ref={remoteVideoRef}
             autoPlay
@@ -312,8 +420,8 @@ const VideoChat = () => {
           )}
         </div>
 
-        {/* Local Video (PiP) */}
-        <div className="absolute bottom-28 right-8 w-48 h-36 rounded-xl overflow-hidden bg-card border-2 border-border shadow-lg">
+        {/* Local Video (bottom half) */}
+        <div className="relative w-full h-1/2 overflow-hidden bg-card">
           <video
             ref={localVideoRef}
             autoPlay
