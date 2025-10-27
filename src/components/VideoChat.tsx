@@ -7,6 +7,7 @@ import { SkipForward, Phone, AlertTriangle, Video, VideoOff } from 'lucide-react
 import { useToast } from '@/hooks/use-toast';
 import ConnectionStatus from './ConnectionStatus';
 import ReportDialog from './ReportDialog';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type ConnectionState = 'idle' | 'searching' | 'connected' | 'disconnected';
 
@@ -20,7 +21,7 @@ const VideoChat = () => {
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const peerIdRef = useRef<string | null>(null);
   const isInitiatorRef = useRef<boolean>(false);
-
+  const signalChannelRef = useRef<RealtimeChannel | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isNSFWDetected, setIsNSFWDetected] = useState(false);
@@ -37,6 +38,10 @@ const VideoChat = () => {
   }, []);
 
   const cleanup = () => {
+    if (signalChannelRef.current) {
+      supabase.removeChannel(signalChannelRef.current);
+      signalChannelRef.current = null;
+    }
     if (webrtcRef.current) {
       webrtcRef.current.disconnect();
       webrtcRef.current = null;
@@ -155,92 +160,74 @@ const VideoChat = () => {
   };
 
   const findMatch = async () => {
-    const maxAttempts = 30; // Try for 30 seconds
-    let attempts = 0;
+    setConnectionState('searching');
+    console.log('[Realtime] Joining matchmaking channel...');
 
-    const matchInterval = setInterval(async () => {
-      if (attempts >= maxAttempts) {
-        clearInterval(matchInterval);
-        console.log('[VideoChat] No match found after 30 seconds');
+    // Clean up any previous channel
+    if (signalChannelRef.current) {
+      supabase.removeChannel(signalChannelRef.current);
+      signalChannelRef.current = null;
+    }
+
+    const channel = supabase.channel('blinkchat_match', {
+      config: { presence: { key: userId } },
+    });
+
+    signalChannelRef.current = channel;
+
+    // Listen for signals targeted at me
+    channel.on('broadcast', { event: `signal:${userId}` }, async ({ payload }) => {
+      console.log('[Realtime] 📥 Signal received via broadcast:', payload?.type);
+      await handleSignal(payload);
+    });
+
+    // Presence-based matchmaking
+    channel.on('presence', { event: 'sync' }, async () => {
+      const state = channel.presenceState() as Record<string, any[]>;
+      const users = Object.keys(state);
+      console.log('[Realtime] Presence sync. Users online:', users);
+
+      const candidates = users.filter((u) => u !== userId);
+      if (!peerIdRef.current && candidates.length > 0) {
+        const peerId = candidates[0];
+        peerIdRef.current = peerId;
+        isInitiatorRef.current = userId < peerId;
+        console.log('[Realtime] ✅ Match found:', peerId, 'initiator?', isInitiatorRef.current);
+
         toast({
-          title: 'No Match Found',
-          description: 'Could not find anyone to chat with. Please try again.',
-        });
-        setConnectionState('idle');
-        return;
-      }
-
-      try {
-        console.log(`[VideoChat] Matchmaking attempt ${attempts + 1}/${maxAttempts}`);
-        const { data, error } = await supabase.functions.invoke('matchmaking', {
-          body: {
-            action: 'find_match',
-            userId,
-            socketId: userId,
-          },
+          title: 'Match Found!',
+          description: 'Connecting to your chat partner...',
         });
 
-        if (error) {
-          console.error('[VideoChat] Matchmaking error:', error);
-          throw error;
+        if (isInitiatorRef.current) {
+          await initiateConnection();
         }
-
-        console.log('[VideoChat] Matchmaking response:', data);
-
-        if (data.matched) {
-          clearInterval(matchInterval);
-          console.log('[VideoChat] ✅ Match found! Peer:', data.peerId);
-          
-          peerIdRef.current = data.peerId;
-          
-          // Determine who initiates (user with lexically smaller ID)
-          isInitiatorRef.current = userId < data.peerId;
-          
-          console.log('[VideoChat] Am I initiator?', isInitiatorRef.current, '(my ID:', userId, 'peer ID:', data.peerId, ')');
-          
-          toast({
-            title: 'Match Found!',
-            description: 'Connecting to your chat partner...',
-          });
-
-          // Start WebRTC signaling
-          if (isInitiatorRef.current) {
-            console.log('[VideoChat] 📞 I am the initiator, creating offer...');
-            await initiateConnection();
-          } else {
-            console.log('[VideoChat] 📱 I am the receiver, waiting for offer...');
-          }
-
-          // Start polling for signals
-          startSignalPolling();
-        }
-      } catch (error) {
-        console.error('[VideoChat] Matchmaking error:', error);
       }
+    });
 
-      attempts++;
-    }, 1000);
+    await channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('[Realtime] Subscribed to matchmaking. Tracking presence...');
+        await channel.track({ userId, online_at: new Date().toISOString() });
+      }
+    });
   };
 
   const sendSignal = async (peerId: string, signal: any) => {
     try {
-      console.log('[Signaling] 📤 Sending signal to', peerId, ':', signal.type);
-      const { data, error } = await supabase.functions.invoke('signaling', {
-        body: {
-          action: 'send_signal',
-          userId,
-          peerId,
-          signal,
-        },
-      });
-      
-      if (error) {
-        console.error('[Signaling] Error sending signal:', error);
-      } else {
-        console.log('[Signaling] ✅ Signal sent successfully');
+      console.log('[Signaling][Realtime] 📤 Sending signal to', peerId, ':', signal.type);
+      if (!signalChannelRef.current) {
+        console.warn('[Signaling][Realtime] No active channel to send signal');
+        return;
       }
+      await signalChannelRef.current.send({
+        type: 'broadcast',
+        event: `signal:${peerId}`,
+        payload: signal,
+      });
+      console.log('[Signaling][Realtime] ✅ Signal broadcasted');
     } catch (error) {
-      console.error('[Signaling] Exception sending signal:', error);
+      console.error('[Signaling][Realtime] Exception sending signal:', error);
     }
   };
 
@@ -264,36 +251,7 @@ const VideoChat = () => {
   };
 
   const startSignalPolling = () => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-
-    console.log('[Signaling] 🔄 Starting signal polling...');
-
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke('signaling', {
-          body: {
-            action: 'get_signals',
-            userId,
-          },
-        });
-
-        if (error) {
-          console.error('[Signaling] Error polling:', error);
-          throw error;
-        }
-
-        if (data.signals && data.signals.length > 0) {
-          console.log('[Signaling] 📥 Received', data.signals.length, 'signal(s)');
-          for (const message of data.signals) {
-            await handleSignal(message.signal);
-          }
-        }
-      } catch (error) {
-        console.error('[Signaling] Polling error:', error);
-      }
-    }, 1000);
+    console.log('[Signaling] Polling disabled; using Realtime channels.');
   };
 
   const handleSignal = async (signal: any) => {
