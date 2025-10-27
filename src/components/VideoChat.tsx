@@ -355,7 +355,7 @@ const VideoChat = () => {
   };
 
   return (
-    <div className="relative w-full h-screen flex flex-col bg-background">
+    <div className="relative w-full h-screen flex flex-col bg-background overflow-hidden">
       {/* Header with status */}
       <div className="absolute top-0 left-0 right-0 z-20 p-4 bg-gradient-to-b from-black/50 to-transparent">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
@@ -368,9 +368,9 @@ const VideoChat = () => {
       </div>
 
       {/* Video Grid - Split Screen */}
-      <div className="flex-1 relative flex flex-col pt-20 pb-24">
+      <div className="relative w-full h-full flex flex-col">
         {/* Remote Video (top half) */}
-        <div className="relative w-full h-1/2 overflow-hidden bg-card border-b-2 border-border">
+        <div className="relative w-full h-1/2 overflow-hidden bg-card border-b border-border">
           <video
             ref={remoteVideoRef}
             autoPlay
@@ -379,8 +379,8 @@ const VideoChat = () => {
           />
           
           {connectionState === 'idle' && (
-            <div className="absolute inset-0 flex items-center justify-center bg-card/95">
-              <div className="text-center space-y-6">
+            <div className="absolute inset-0 flex items-center justify-center bg-card/95 z-10">
+              <div className="text-center space-y-6 px-4">
                 <div className="w-32 h-32 mx-auto bg-gradient-primary rounded-full flex items-center justify-center shadow-[var(--shadow-glow)]">
                   <Video className="w-16 h-16 text-white" />
                 </div>
@@ -400,7 +400,7 @@ const VideoChat = () => {
           )}
 
           {connectionState === 'searching' && (
-            <div className="absolute inset-0 flex items-center justify-center bg-card/95">
+            <div className="absolute inset-0 flex items-center justify-center bg-card/95 z-10">
               <div className="text-center space-y-4">
                 <div className="w-20 h-20 mx-auto border-4 border-primary border-t-transparent rounded-full animate-spin" />
                 <h2 className="text-2xl font-bold">Finding Someone...</h2>
@@ -410,7 +410,7 @@ const VideoChat = () => {
           )}
 
           {isNSFWDetected && (
-            <div className="absolute inset-0 flex items-center justify-center bg-destructive/20">
+            <div className="absolute inset-0 flex items-center justify-center bg-destructive/20 z-10">
               <div className="text-center space-y-4 p-8 bg-card/90 rounded-2xl backdrop-blur-sm">
                 <AlertTriangle className="w-16 h-16 mx-auto text-destructive" />
                 <h3 className="text-xl font-bold">Inappropriate Content Detected</h3>
@@ -435,52 +435,52 @@ const VideoChat = () => {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Controls */}
-      {connectionState !== 'idle' && (
-        <div className="absolute bottom-0 left-0 right-0 z-20 p-6 bg-gradient-to-t from-black/50 to-transparent">
-          <div className="flex items-center justify-center gap-4 max-w-7xl mx-auto">
-            <Button
-              size="lg"
-              variant="secondary"
-              onClick={toggleVideo}
-              className="rounded-full w-14 h-14 p-0"
-            >
-              {isVideoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-            </Button>
+        {/* Controls - Below videos */}
+        {connectionState !== 'idle' && (
+          <div className="absolute bottom-0 left-0 right-0 z-30 p-6 bg-gradient-to-t from-black/80 to-transparent">
+            <div className="flex items-center justify-center gap-4 max-w-7xl mx-auto">
+              <Button
+                size="lg"
+                variant="secondary"
+                onClick={toggleVideo}
+                className="rounded-full w-14 h-14 p-0"
+              >
+                {isVideoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+              </Button>
 
-            <Button
-              size="lg"
-              onClick={handleSkip}
-              disabled={connectionState !== 'connected'}
-              className="bg-accent hover:bg-accent/90 text-white rounded-full px-8"
-            >
-              <SkipForward className="w-5 h-5 mr-2" />
-              Skip
-            </Button>
+              <Button
+                size="lg"
+                onClick={handleSkip}
+                disabled={connectionState !== 'connected'}
+                className="bg-accent hover:bg-accent/90 text-white rounded-full px-8"
+              >
+                <SkipForward className="w-5 h-5 mr-2" />
+                Skip
+              </Button>
 
-            <Button
-              size="lg"
-              variant="destructive"
-              onClick={handleEndChat}
-              className="rounded-full w-14 h-14 p-0"
-            >
-              <Phone className="w-5 h-5" />
-            </Button>
+              <Button
+                size="lg"
+                variant="destructive"
+                onClick={handleEndChat}
+                className="rounded-full w-14 h-14 p-0"
+              >
+                <Phone className="w-5 h-5" />
+              </Button>
 
-            <Button
-              size="lg"
-              variant="outline"
-              onClick={() => setReportDialogOpen(true)}
-              disabled={connectionState !== 'connected'}
-              className="rounded-full w-14 h-14 p-0 border-destructive text-destructive hover:bg-destructive hover:text-white"
-            >
-              <AlertTriangle className="w-5 h-5" />
-            </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={() => setReportDialogOpen(true)}
+                disabled={connectionState !== 'connected'}
+                className="rounded-full w-14 h-14 p-0 border-destructive text-destructive hover:bg-destructive hover:text-white"
+              >
+                <AlertTriangle className="w-5 h-5" />
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <ReportDialog 
         open={reportDialogOpen}
