@@ -136,10 +136,13 @@ const VideoChat = () => {
         console.log('[VideoChat] Local stream initialized');
       } catch (mediaError: any) {
         console.warn('[VideoChat] Media access failed, continuing without camera:', mediaError.name);
-        // Continue anyway for testing purposes
+        // Ensure we can still receive partner's media
+        try {
+          webrtcRef.current?.prepareReceiveOnly?.();
+        } catch {}
         toast({
           title: 'Camera unavailable',
-          description: 'Continuing in test mode without video',
+          description: 'Continuing without camera; you can still receive video.',
         });
       }
 

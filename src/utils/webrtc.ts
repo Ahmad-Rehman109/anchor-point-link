@@ -12,12 +12,27 @@ export class WebRTCConnection {
   constructor(config: WebRTCConfig = {}) {
     this.config = config;
     
-    // Initialize peer connection with STUN servers
+    // Initialize peer connection with STUN/TURN servers
+    const iceServers: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+    ];
+
+    // Optional TURN (set VITE_TURN_URL, VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL)
+    const turnUrl = (import.meta as any)?.env?.VITE_TURN_URL as string | undefined;
+    const turnUsername = (import.meta as any)?.env?.VITE_TURN_USERNAME as string | undefined;
+    const turnCredential = (import.meta as any)?.env?.VITE_TURN_CREDENTIAL as string | undefined;
+
+    if (turnUrl && turnUsername && turnCredential) {
+      const urls = turnUrl.split(',').map(u => u.trim());
+      console.log('[WebRTC] Using TURN server(s):', urls);
+      iceServers.push({ urls, username: turnUsername, credential: turnCredential });
+    } else {
+      console.log('[WebRTC] No TURN configured. Connectivity may fail on strict NATs.');
+    }
+
     this.pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
+      iceServers,
     });
 
     this.setupEventHandlers();
@@ -122,6 +137,24 @@ export class WebRTCConnection {
     return this.localStream;
   }
 
+  prepareReceiveOnly() {
+    try {
+      const transceivers = (this.pc as any).getTransceivers?.() || [];
+      const hasVideo = transceivers.some((t: RTCRtpTransceiver) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
+      const hasAudio = transceivers.some((t: RTCRtpTransceiver) => t.receiver?.track?.kind === 'audio' || t.sender?.track?.kind === 'audio');
+
+      if (!hasVideo) {
+        this.pc.addTransceiver('video', { direction: 'recvonly' });
+      }
+      if (!hasAudio) {
+        this.pc.addTransceiver('audio', { direction: 'recvonly' });
+      }
+      console.log('[WebRTC] Receive-only transceivers ensured');
+    } catch (e) {
+      console.warn('[WebRTC] Could not add recvonly transceivers:', e);
+    }
+  }
+
   disconnect() {
     // Stop all tracks
     if (this.localStream) {
@@ -153,3 +186,4 @@ export function captureVideoFrame(videoElement: HTMLVideoElement): string | null
     return null;
   }
 }
+
