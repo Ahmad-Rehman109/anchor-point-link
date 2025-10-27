@@ -181,11 +181,11 @@ const VideoChat = () => {
       await handleSignal(payload);
     });
 
-    // Presence-based matchmaking
-    channel.on('presence', { event: 'sync' }, async () => {
+    // Helper to check for matches
+    const checkForMatch = async () => {
       const state = channel.presenceState() as Record<string, any[]>;
       const users = Object.keys(state);
-      console.log('[Realtime] Presence sync. Users online:', users);
+      console.log('[Realtime] Checking for match. Users online:', users);
 
       const candidates = users.filter((u) => u !== userId);
       if (!peerIdRef.current && candidates.length > 0) {
@@ -203,6 +203,13 @@ const VideoChat = () => {
           await initiateConnection();
         }
       }
+    };
+
+    // Presence-based matchmaking
+    channel.on('presence', { event: 'sync' }, checkForMatch);
+    channel.on('presence', { event: 'join' }, async ({ key, newPresences }) => {
+      console.log('[Realtime] User joined:', key);
+      await checkForMatch();
     });
 
     await channel.subscribe(async (status) => {
